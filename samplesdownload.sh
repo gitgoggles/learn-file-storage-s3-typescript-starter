@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 mkdir -p samples
 
@@ -11,6 +11,6 @@ image_urls=(
 )
 
 for url in "${image_urls[@]}"; do
-  file_name=$(basename "$url")
-  curl -sSfL -o "samples/$file_name" "$url"
+    file_name=$(basename "$url")
+    curl -sSfL -o "samples/$file_name" "$url"
 done

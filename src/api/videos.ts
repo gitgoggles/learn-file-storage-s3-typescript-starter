@@ -4,9 +4,30 @@ import { type ApiConfig } from "../config";
 import type { BunRequest } from "bun";
 import { BadRequestError, UserForbiddenError } from "./errors";
 import { getBearerToken, validateJWT } from "../auth";
-import { getVideo, updateVideo } from "../db/videos";
+import { getVideo, updateVideo, type Video } from "../db/videos";
 import { s3 } from "bun";
 import path from "path";
+
+export function dbVideoToSignedVideo(cfg: ApiConfig, video: Video) {
+	const key = video.videoURL;
+	if (typeof key !== "string") {
+		throw new BadRequestError("key missing from videoUrl");
+	}
+	const presignedURL = generatePresignedURL(cfg, key, 3600);
+	if (typeof presignedURL === "string") {
+		video.videoURL = presignedURL;
+	}
+	return video;
+}
+export function generatePresignedURL(
+	cfg: ApiConfig,
+	key: string,
+	expireTime: number,
+) {
+	return s3.presign(key, {
+		expiresIn: expireTime,
+	});
+}
 
 export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
 	const MAX_UPLOAD_SIZE = 1 * 1024 * 1024 * 1024;
@@ -17,8 +38,8 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
 
 	const token = getBearerToken(req.headers);
 	const userID = validateJWT(token, cfg.jwtSecret);
-	const metaData = getVideo(cfg.db, videoId);
-	if (userID !== metaData?.userID) {
+	const videoObject = getVideo(cfg.db, videoId);
+	if (userID !== videoObject?.userID) {
 		throw new UserForbiddenError("Not your video!");
 	}
 	const videoData = (await req.formData()).get("video");
@@ -42,14 +63,17 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
 	await s3.write(`${aspectRatio}/${key}`, tempFile, {
 		type: videoData.type,
 	});
-	const videoUrl = `https://${cfg.s3Bucket}.s3.${cfg.s3Region}.amazonaws.com/${aspectRatio}/${key}`;
+	const videoUrl = `https://${cfg.cloudfrontDomain}/${aspectRatio}/${key}`;
+	// const videoUrl = `https://${cfg.s3Bucket}.s3.${cfg.s3Region}.amazonaws.com/${aspectRatio}/${key}`;
+	// const videoUrl = `${aspectRatio}/${key}`;
 
-	metaData.videoURL = videoUrl;
-	updateVideo(cfg.db, metaData);
+	videoObject.videoURL = videoUrl;
+	updateVideo(cfg.db, videoObject);
 
 	await Bun.file(tempPath).delete();
+	// const presignedVideo = await dbVideoToSignedVideo(cfg, metaData);
 
-	return respondWithJSON(200, null);
+	return respondWithJSON(200, videoObject);
 }
 
 export async function getVideoAspectRatio(filePath: string) {
